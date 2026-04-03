@@ -1,0 +1,82 @@
+This document explains the datasets used in the `Review22.ipynb` notebook, why they were combined, and why the resulting dataset is suitable for recurrent neural networks (RNNs/LSTMs).
+
+## 1. The Raw Datasets
+
+The project utilizes several distinct types of agricultural and climate data, aggregated at the US county level:
+
+*   **yielddata.csv (Historical Crop Yield):** Contains the target variable, which is the historical corn yield (bushels per acre) for a given county and year.
+*   **gddAprOct.csv (Growing Degree Days):** A measure of heat accumulation used to predict plant development rates. This file contains a massive amount of temporal data (123 columns):
+    *   `gdd_gddm1` ... `gdd_gddm60`: The past 60 months of historical GDD values leading up to the harvest year. This is the crucial *time-series* component.
+    *   `gdd_gdd0`: Base-year (current year) GDD.
+    *   `gdd_gddp1` ... `gdd_gddpX`: Future projected GDD values.
+*   **pptAprOct.csv (Precipitation):** Total precipitation for the county/year. A static climatic feature affecting crop growth.
+*   **soilXXXX.csv (Soil Composition):** Examples include `soil1992.csv`, `soil2001.csv`, etc. These files define the physical properties of the soil in each county. Soil composition changes very slowly, so it is treated as a *static geospatial feature*.
+*   **gridInfo.csv (Geospatial Grid Data):** Contains the geographic coordinates (latitude, longitude) translating counties into spatial locations for use in computer vision models like CNNs.
+
+## 2. Why Combine the Columns? (The Merging Process)
+
+The raw files exist separately because they often come from different government or research databases (e.g., USDA for yield, NOAA for climate, SSURGO for soils). To train a single machine learning model that predicts yield based on *all* contributing factors, the data must be merged.
+
+### The Merging Logic (`load_and_merge` function):
+1.  **Inner Join on `county_id` and `year` (Yield ⋈ GDD ⋈ PPT):**
+    The model needs specific climate data for the exact year the crop was grown. A county must exist in all three datasets for a specific year to provide a valid training sample. If yield data exists for 1995 but weather data is missing, we cannot train on it. Thus, an *inner join* ensures only complete historical records are kept.
+2.  **Left Join on `county_id` (Result + Soil + GridInfo):**
+    Soil properties and geographic coordinates (lat/lon) are considered static (they barely change year-over-year). Therefore, the notebook performs a *left join* using only the `county_id`. This broadcasts the single row of soil/geo data for "County X" to *every year* of historical yield records for "County X".
+
+**Resulting Master DataFrame (70,721 rows):**
+Every single row now represents a complete feature vector for one county in one specific year:
+`[60 months of past heat (sequence)] + [current heat] + [precipitation] + [soil type] + [lat/lon] -> Target: Yield (bu/acre)`
+
+## 3. Why is this suitable for RNN / LSTM Models?
+
+Recurrent Neural Networks (RNNs) and Long Short-Term Memory networks (LSTMs) are specifically designed to analyze *sequential* or *time-series* data.
+
+### The Temporal Sequence Feature
+The core reason this dataset works for an LSTM is the presence of the `gdd_gddm1` to `gdd_gddm60` columns. When building the arrays for training, the `TemporalPreprocessor` class deliberately reshapes these 60 columns:
+
+1.  **Shape Requirement:** LSTMs in PyTorch require tracking data over "time steps". The preprocessor converts the flat rows into a 3D tensor: `(Samples, TimeSteps, Features)`.
+2.  **The Reshape:** A shape of `(70721, 60, 1)` means there are 70,721 individual harvest records. Each record is a sequence of **60 distinct time steps** (the 5 years of preceding months). At each time step, there is **1 feature** (the GDD value for that exact corresponding month).
+
+### Why use an LSTM for Crop Yield?
+Crop yields are non-linear and exhibit "memory." A severe drought three years ago might permanently degrade soil moisture reserves, affecting a crop grown today. Standard feed-forward networks (MLPs) struggle to understand the chronological order of these events.
+
+*   **Sequence Memory:** Instead of treating the 60 past months as 60 random features, the LSTM processes them chronologically ($Month_{-60} \rightarrow Month_{-59} \dots \rightarrow Month_{0}$). It maintains an internal "hidden state" that accumulates the story of the climate over the past 5 years.
+*   **The Architecture in `Review22.ipynb`:**
+    *   The 60-month chronological sequence goes through the **LSTM**.
+    *   The LSTM condenses the 5-year climatic history into a single representative vector (aided by Bahdanau Attention).
+    *   Simultaneously, the *static features* (base heat, total precipitation, soil, location) and a unique embedding representing the specific county are passed through standard dense layers.
+    *   Finally, the condensed 5-year history and the static features are concatenated (fused) together to make the final yield prediction.
+
+
+
+Total Rows (Samples): 70,721
+Total Columns (Features): 143
+
+
+Training Set Rows (Before 2009): 59,592 samples
+Validation Set Rows (2009 and Later): 11,129 samples
+
+
+Time Series Sequence X_seq: 
+
+(70721, 60, 1)
+ -> 70,721 samples, 60 time steps, 1 feature per step.
+Static Features X_static: 
+
+(70721, 72)
+ -> 70,721 samples, 72 static features.
+Target Yield y: 
+
+(70721,)
+ -> 70,721 samples.
+
+
+gdd_gddm1 through gdd_gddm60 represents historical monthly averages of Growing Degree Days (GDD).
+
+GDD is a measure of heat accumulation used by agronomists to predict plant and insect development rates throughout the growing season. It's essentially a way to track how much useful heat the crop has received.
+
+gddm1 is the GDD for the month exactly 1 month prior to the harvest. gddm60 is the GDD for the month exactly 60 months (5 years) prior to the harvest.
+
+Highest R² Score: 0.5704. R² measures how much of the variation in the crop yield can be explained by the model's inputs. A score of 0.5704 (57%) is vastly superior to the LSTM (only ~14%) and the Transformer (which completely failed to find a correlation at ~0%).
+Lowest Error (RMSE): 25.6434. Root Mean Squared Error measures the average difference between the predicted yield and the actual yield, punishing large errors more heavily. The CNN had the lowest error spread by a wide margin (LSTMs and Transformers had errors near 36–39).
+Lowest Absolute Error (MAE): 19.6894. On average, the CNN was off by about 19.68 bushels per acre when guessing the yield, which is much tighter than the LSTM (off by ~31) and Transformer (off by ~33).

@@ -1,0 +1,74 @@
+# Review22.ipynb Execution Logs Explanation
+
+This file provides a detailed breakdown of the execution logs from the `Review22.ipynb` notebook. It walks through the data processing pipeline, the model training loops (including epochs and early stopping), and the final evaluation metrics.
+
+## 1. Environment & Initialization
+- Device: The notebook successfully connected to a CUDA-enabled GPU (Tesla T4) using PyTorch 2.10.0+cu128.
+- 11 initial files were uploaded (including yielddata.csv, gddAprOct.csv, pptAprOct.csv, gridInfo.csv, various soil datas, and PDF manual).
+
+## 2. Data Loading & Merging (Step 1)
+- The raw datasets were loaded and their specific columns were automatically detected.
+- Yield data shape: 107,450 rows × 6 columns.
+- The merging process combined yield, GDD (Growing Degree Days), PPT (Precipitation), Soil, and Grid Information into a single master DataFrame.
+- An inner join on `county_id` and `year` was performed, followed by left joins for static features.
+- Missing values: 36,599 rows with missing yield were dropped.
+- Final Master DataFrame Shape: 70,721 rows × 143 columns, covering 2,644 counties across the years 1981–2015. Yield range was between 0.0 and 246.0 bu/acre.
+
+## 3. Data Preprocessing (Step 2)
+- Temporal Features: 60 past months of GDD data were structured into a sequence shape.
+- Static Features: 72 static features including base-year GDD, projected GDD, total precipitation, soil, and geographic coordinates.
+- Train/Validation Split: The dataset was split by year to avoid data leakage. Models trained on years < 2009 (59,592 samples) and validated on years >= 2009 (11,129 samples).
+
+## 4. Model 1: RNN architectures (LSTM, RNN, GRU)
+
+**Explanation of Early Stopping:**
+"Early Stopping" is extensively used in all training loops. This process evaluates the loss of the model on the unseen validation set at the end of each epoch. If the validation loss fails to improve after a set amount of epochs (the `patience` parameter, commonly 5 to 10), the training loop breaks early to prevent **overfitting** (where the network memorizes the training data but fails to generalize).
+
+**Hyperparameter Search (LSTM):**
+- Two learning rates (0.001, 0.0005) and two hidden dimensions (64, 128) were tested.
+- `lr=0.001, h=64`: Stopped early at epoch 23 since validation error didn't improve.
+- `lr=0.001, h=128`: Stopped early at epoch 30. (Best configuration)
+- `lr=0.0005, h=64`: Ran for 30 epochs out of 30.
+- `lr=0.0005, h=128`: Stopped early at epoch 17.
+
+**Architecture Comparison:**
+- RNN: Reached epoch 10 and triggered early stopping at epoch 15 (Validation RMSE = 40.74, R² = -0.08).
+- LSTM: Triggered early stopping at epoch 28 (Validation RMSE = 36.28, R² = 0.1397).
+- GRU: Triggered early stopping at epoch 41 (Validation RMSE = 38.39, R² = 0.0369).
+*LSTM was the best performer among sequence models.*
+
+## 5. Model 2: Convolutional Neural Networks (CNN) Vectorization
+- Spatial imagery: 64x64 grids based on geographical data were created for passing into CNN models.
+
+**Hyperparameter Search:**
+- The notebook tested combinations of learning rates and network unfreezing (fine-tuning).
+- `ResNet (lr=0.001, unfreeze_top=0)`: Stopped early at epoch 10. (Best configuration with RMSE = 35.79)
+- `ResNet (lr=0.0005, unfreeze_top=2)`: Ran up to epoch 10.
+
+**Architecture Comparison:**
+- ResNet18-Frozen: Triggered early stopping at epoch 17 (Validation RMSE = 35.40, R² = 0.1812).
+- EfficientNet-FineTuned: Tuned on the top 2 layers (4.33 million trainable parameters). Triggered early stopping at epoch 14 (Validation RMSE = 25.64, R² = 0.5704).
+*EfficientNet drastically outperformed all previous model types.*
+
+## 6. Model 3: Transformer Networks
+
+**Hyperparameter Search:**
+- Model dimension (d_model) and number of heads were evaluated.
+- `TF_d32_h4`: Stopped early at epoch 12.
+- `TF_d64_h4`: Stopped early at epoch 8. (Selected as best)
+
+**Architecture Comparison:**
+- TF-Small (1 layer): Triggered early stopping at epoch 23 (Validation RMSE = 39.11, R² = 0.0007).
+- TF-Base (2 layers): Triggered early stopping at epoch 21 (Validation RMSE = 40.16, R² = -0.0536).
+*Transformers generally showed poor performance and negative/near-zero R² values, indicating they struggled to learn from the sequence data directly.*
+
+## 7. Final Evaluation and Conclusion
+The script compared the best variants of the three tested architectures directly:
+1. LSTM/RNN/GRU (LSTM variant): RMSE = 36.2895, R² = 0.1397
+2. CNN (EfficientNet-FineTuned variant): RMSE = 25.6434, R² = 0.5704
+3. Transformer (TF-Small variant): RMSE = 39.1123, R² = 0.0007
+
+**🏆 Final Winner:** The CNN using an EfficientNet-FineTuned architecture emerged as the definitive winner, providing the lowest Mean Absolute Error (19.6894) and Root Mean Squared Error (25.6434), paired with the highest variation explained (R² of 0.5704).
+
+## Explanation of Epochs
+An **epoch** is one complete pass through the entire training dataset. For example, when training the 'EffNet-FineTuned' network, it ran for 14 complete passes across the dataset before the evaluation loop detected that its performance on the unseen validation dataset was plateauing, thereby initiating an early stop at epoch 14.

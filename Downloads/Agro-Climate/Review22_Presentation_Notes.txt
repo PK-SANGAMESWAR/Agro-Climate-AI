@@ -1,0 +1,36 @@
+# Agro-Climate Crop Yield Project: Final Review Notes
+
+These are the key talking points and takeaways from the experiment for your upcoming review presentation.
+
+## 1. Project Objective (The "Why")
+*   **Goal:** To accurately predict continuous agricultural crop yield (specifically corn, measured in bushels per acre) using historical climate, geographical, and soil data.
+*   **Problem Type:** Regression (predicting a continuous number), not classification. Therefore, "accuracy" is not an applicable metric. Instead, the project uses R-Squared (R²), Root Mean Squared Error (RMSE), and Mean Absolute Error (MAE).
+*   **Scope:** The dataset covered 2,644 US counties over 35 years (1981–2015), providing 70,721 total historical harvest records after preprocessing.
+
+## 2. The Dataset (The "What")
+*   **Target Variable:** Corn Yield (bu/acre). Range: 0.0 to 246.0.
+*   **Temporal Features (The Timeline):** Contains 60 months (5 solid years) of historical monthly Growing Degree Days (GDD). GDD is a measurement of accumulated heat critical for plant growth. Using the previous 5 years allows the models to learn if long-term events (like multi-year droughts) affect current harvest yields.
+*   **Static Features:** 72 total static features including base-year GDD, total precipitation, soil composition variables (which rarely change year-over-year), and geographic coordinates (latitude/longitude).
+*   **Data Splitting (Crucial for Review):** The data was split **chronologically**, not randomly. Training occurred on years prior to 2009 (59,592 samples), and validation occurred on years 2009 and later (11,129 samples). This mimics real-world forecasting and prevents *data leakage* (where a model looks into the "future" to guess the past).
+
+## 3. The Three Architectures Tested
+The experiment systematically tested three distinct Deep Learning architectures to see which handled the complex temporal and static data the best.
+
+*   **Architecture 1: Sequence Models (RNN / LSTM / GRU)**
+    *   *Approach:* Processed the 60-month temperature history strictly as a chronological timeline.
+    *   *Best Result:* The vanilla LSTM significantly outperformed standard RNNs and GRUs.
+    *   *Metrics:* R² = 0.1397 (Explained ~14% of the variance). RMSE = 36.29.
+*   **Architecture 2: Convolutional Neural Networks (CNNs)**
+    *   *Approach:* Restructured the data into 64x64 grid spatial "images" using geographic coordinates. Instead of looking at a timeline, the CNN looked at geographic heat maps.
+    *   *Best Result:* A fine-tuned EfficientNet-B0 backbone (with its top 2 layers unfrozen) aggressively beat a frozen ResNet-18.
+    *   *Metrics:* **R² = 0.5704 (Explained 57% of the variance). RMSE = 25.64.**
+*   **Architecture 3: Transformers**
+    *   *Approach:* Used self-attention mechanisms on the 60-month sequences.
+    *   *Best Result:* The TF-Small model performed terribly, showing no ability to find signal in the noise.
+    *   *Metrics:* R² = 0.0007 (Effectively 0% — the model just guessed the statistical average every time). RMSE = 39.11.
+
+## 4. Key Takeaways & Conclusions
+*   **Clear Winner:** The CNN (EfficientNet-FineTuned) was the definitive winner of the experiment.
+    *   It proved that evaluating geographic/spatial patterns (heatmaps) was vastly more informative for predicting agricultural yields than evaluating flat chronological timelines (LSTMs).
+*   **Early Stopping:** All training processes utilized 'Early Stopping' on the validation dataset (usually looking for 5-10 epochs of zero improvement) to prevent overfitting.
+*   **Practical Accuracy:** The best model (CNN) achieved an MAE of 19.6894, meaning that its predictions were, on average, within roughly 19.68 bushels per acre of the true real-world harvest yield.
